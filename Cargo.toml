@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["spotproto", "spotlib"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.95"
+authors = ["Karpelès Lab Inc."]
+license = "MIT"
+repository = "https://github.com/KarpelesLab/spotlib-rs"
+
+[workspace.dependencies]
+purecrypto = "0.6.10"
+bottlers = "0.1.0"
+rsurl = "0.0.6"
+ciborium = "0.2"
+serde_json = "1"

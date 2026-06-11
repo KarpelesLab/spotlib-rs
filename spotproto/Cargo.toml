@@ -1,0 +1,19 @@
+[package]
+name = "spotproto"
+version = "0.1.0"
+description = "Wire protocol for the Spot real-time messaging network (packets, handshake, instant messages)"
+keywords = ["spot", "messaging", "protocol"]
+categories = ["network-programming"]
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bottlers.workspace = true
+ciborium.workspace = true
+
+[dev-dependencies]
+purecrypto.workspace = true

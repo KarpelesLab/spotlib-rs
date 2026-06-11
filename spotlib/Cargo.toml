@@ -1,0 +1,20 @@
+[package]
+name = "spotlib"
+version = "0.1.0"
+description = "Client for the Spot secure messaging network: end-to-end encrypted messaging over websocket connections"
+keywords = ["spot", "messaging", "e2ee", "websocket"]
+categories = ["network-programming", "cryptography"]
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+spotproto = { version = "0.1.0", path = "../spotproto" }
+bottlers.workspace = true
+purecrypto.workspace = true
+rsurl.workspace = true
+ciborium.workspace = true
+serde_json.workspace = true
