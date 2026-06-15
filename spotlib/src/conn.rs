@@ -1,22 +1,32 @@
 //! Connection management: server discovery, per-connection threads, the spot
 //! handshake, and packet dispatch.
+//!
+//! Each connection's websocket is split into a [`WsReader`] driven by this
+//! thread's read loop and a [`WsWriter`] (behind a mutex) shared between the
+//! read loop — which answers mid-stream re-handshakes — and a dedicated
+//! writer thread that drains the client's shared outgoing message queue.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rsurl::{WsReader, WsWriter};
 use spotproto::Packet;
 
 use crate::api;
 use crate::client::Inner;
 use crate::error::{Error, Result};
-use crate::ws::{WsConn, WsMessage, WsWriter};
+use crate::transport::{self, Incoming};
 
 /// How long the websocket dial (TCP + TLS + upgrade) may take.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
-/// Read timeout while waiting for the spot handshake to complete.
+/// Read deadline while waiting for the spot handshake to complete.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
-/// Polling granularity for writer threads checking for shutdown.
+/// Steady-state read deadline: bounds how long a quiet connection blocks
+/// before the read loop re-checks the client's shutdown flag. rsurl buffers
+/// partial frames, so a deadline that lands mid-frame is resumed safely.
+const STEADY_READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// Polling granularity for the writer thread checking for shutdown.
 const WRITE_POLL: Duration = Duration::from_millis(500);
 
 /// Manages the client lifecycle: performs the initial connection, then
@@ -78,7 +88,7 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
 
     let mut fail_giveup = 0;
     while !inner.is_closed() {
-        match WsConn::connect(&host, "/_websocket", DIAL_TIMEOUT) {
+        match transport::connect(&host, "/_websocket", DIAL_TIMEOUT) {
             Err(e) => {
                 inner.logf(format_args!("failed to connect to server: {e}"));
                 fail_giveup += 1;
@@ -88,9 +98,9 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
                 }
                 std::thread::sleep(Duration::from_secs(2));
             }
-            Ok(ws) => {
+            Ok((reader, writer)) => {
                 fail_giveup = 0;
-                if let Err(e) = handle(&inner, ws) {
+                if let Err(e) = handle(&inner, reader, writer) {
                     inner.logf(format_args!(
                         "error during communications with server: {e}"
                     ));
@@ -106,12 +116,16 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
 
 /// Handles an established websocket connection: performs the spot handshake,
 /// then routes packets until the connection dies.
-fn handle(inner: &Arc<Inner>, mut ws: WsConn) -> Result<()> {
-    let writer = ws.writer();
+fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<()> {
+    let writer = Arc::new(Mutex::new(writer));
 
-    ws.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
-    handshake(inner, &mut ws, &writer)?;
-    ws.set_read_timeout(None)?;
+    reader
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(|e| Error::Ws(e.to_string()))?;
+    handshake(inner, &mut reader, &writer)?;
+    reader
+        .set_read_timeout(Some(STEADY_READ_TIMEOUT))
+        .map_err(|e| Error::Ws(e.to_string()))?;
 
     inner.online_incr();
     let _online_guard = OnlineGuard { inner };
@@ -120,15 +134,15 @@ fn handle(inner: &Arc<Inner>, mut ws: WsConn) -> Result<()> {
     let dead = Arc::new(AtomicBool::new(false));
     let writer_dead = dead.clone();
     let writer_inner = inner.clone();
-    let writer_ws = writer.clone();
+    let writer_w = writer.clone();
     let writer_thread = std::thread::spawn(move || {
         loop {
             if writer_dead.load(Ordering::Relaxed) {
                 return;
             }
             if writer_inner.is_closed() {
-                // shut the socket down to unblock the read loop
-                writer_ws.close();
+                // send a close so the server drops us, unblocking the read loop
+                transport::close(&writer_w);
                 return;
             }
             let Some(msg) = writer_inner.wrq.pop_timeout(WRITE_POLL) else {
@@ -141,7 +155,7 @@ fn handle(inner: &Arc<Inner>, mut ws: WsConn) -> Result<()> {
                     continue;
                 }
             };
-            if writer_ws.send_binary(&buf).is_err() {
+            if transport::send(&writer_w, &buf).is_err() {
                 // connection is dying: requeue so another connection sends it
                 writer_inner.wrq.push_front(msg);
                 return;
@@ -149,7 +163,7 @@ fn handle(inner: &Arc<Inner>, mut ws: WsConn) -> Result<()> {
         }
     });
 
-    let res = read_loop(inner, &mut ws, &writer);
+    let res = read_loop(inner, &mut reader, &writer);
     dead.store(true, Ordering::Relaxed);
     let _ = writer_thread.join();
     res
@@ -157,14 +171,14 @@ fn handle(inner: &Arc<Inner>, mut ws: WsConn) -> Result<()> {
 
 /// Performs the authentication handshake: answers challenges (updating group
 /// membership when requested) until the server reports ready.
-fn handshake(inner: &Arc<Inner>, ws: &mut WsConn, writer: &WsWriter) -> Result<()> {
+fn handshake(inner: &Arc<Inner>, reader: &mut WsReader, writer: &Mutex<WsWriter>) -> Result<()> {
     loop {
-        let msg = match ws.read_message()? {
-            Some(m) => m,
-            None => return Err(Error::Ws("connection closed during handshake".into())),
-        };
-        let WsMessage::Binary(data) = msg else {
-            continue; // ignore text messages
+        let data = match transport::recv_packet(reader)? {
+            Incoming::Packet(data) => data,
+            Incoming::Closed => {
+                return Err(Error::Ws("connection closed during handshake".into()))
+            }
+            Incoming::Timeout => return Err(Error::Ws("handshake timed out".into())),
         };
         match spotproto::parse(&data, true)? {
             Packet::HandshakeRequest(req) => {
@@ -178,9 +192,7 @@ fn handshake(inner: &Arc<Inner>, ws: &mut WsConn, writer: &WsWriter) -> Result<(
                 respond_handshake(inner, &req, writer)?;
             }
             other => {
-                inner.logf(format_args!(
-                    "unsupported handshake packet type {other:?}"
-                ));
+                inner.logf(format_args!("unsupported handshake packet type {other:?}"));
             }
         }
     }
@@ -191,7 +203,7 @@ fn handshake(inner: &Arc<Inner>, ws: &mut WsConn, writer: &WsWriter) -> Result<(
 fn respond_handshake(
     inner: &Arc<Inner>,
     req: &spotproto::HandshakeRequest,
-    writer: &WsWriter,
+    writer: &Mutex<WsWriter>,
 ) -> Result<()> {
     if let Some(groups) = &req.groups {
         // need to re-compute our identity with the new memberships
@@ -201,19 +213,21 @@ fn respond_handshake(
     }
     let mut res = req.respond(inner.signer())?;
     res.id = inner.id_bin();
-    writer.send_binary(&Packet::HandshakeResponse(res).encode()?)?;
-    Ok(())
+    transport::send(writer, &Packet::HandshakeResponse(res).encode()?)
 }
 
 /// Reads and dispatches packets until the connection closes.
-fn read_loop(inner: &Arc<Inner>, ws: &mut WsConn, writer: &WsWriter) -> Result<()> {
+fn read_loop(inner: &Arc<Inner>, reader: &mut WsReader, writer: &Mutex<WsWriter>) -> Result<()> {
     loop {
-        let msg = match ws.read_message()? {
-            Some(m) => m,
-            None => return Ok(()), // clean close
-        };
-        let WsMessage::Binary(data) = msg else {
-            continue; // ignore text messages
+        let data = match transport::recv_packet(reader)? {
+            Incoming::Packet(data) => data,
+            Incoming::Closed => return Ok(()), // clean close
+            Incoming::Timeout => {
+                if inner.is_closed() {
+                    return Ok(());
+                }
+                continue;
+            }
         };
         match spotproto::parse(&data, true)? {
             Packet::HandshakeRequest(req) => {

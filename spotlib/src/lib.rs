@@ -76,9 +76,8 @@ mod im;
 mod packetconn;
 mod resolver;
 mod store;
-mod tlsconn;
+mod transport;
 mod utils;
-mod ws;
 
 pub use client::{Client, ClientBuilder, MessageHandler};
 pub use error::{Error, Result};

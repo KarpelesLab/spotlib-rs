@@ -12,8 +12,8 @@ repository = "https://github.com/KarpelesLab/spotlib-rs"
 [workspace.dependencies]
 purecrypto = "0.6.10"
 bottlers = "0.1.0"
-# spotlib only needs HTTP GET + TLS (for the REST API and the websocket TLS
-# roots); drop rsurl's SSH, BitTorrent and IDN code from the build.
-rsurl = { version = "0.0.10", default-features = false, features = ["purecrypto-tls"] }
+# spotlib uses rsurl for the REST API (HTTP GET) and its persistent split
+# WebSocket over a custom connector; drop SSH, BitTorrent and IDN from the build.
+rsurl = { version = "0.0.11", default-features = false, features = ["purecrypto-tls"] }
 ciborium = "0.2"
 serde_json = "1"

@@ -6,13 +6,13 @@
 //! Decoding them locally avoids DNS lookups that can fail on misconfigured
 //! resolvers.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use crate::error::{Error, Result};
 
 /// Resolves a hostname to IP addresses, decoding `g-dns.net` names locally
-/// and falling back to the system resolver otherwise.
+/// and falling back to the system resolver otherwise. Used by the websocket
+/// transport's connector.
 pub fn lookup_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     let lower = host.to_ascii_lowercase();
     if let Some(encoded) = lower.strip_suffix(".g-dns.net") {
@@ -34,20 +34,6 @@ pub fn lookup_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         .to_socket_addrs()
         .map_err(Error::Io)?
         .collect())
-}
-
-/// Opens a TCP connection to `host:port`, trying each resolved address in
-/// turn with the given per-attempt timeout.
-pub fn dial(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
-    let addrs = lookup_host(host, port)?;
-    let mut last_err: Option<Error> = None;
-    for addr in &addrs {
-        match TcpStream::connect_timeout(addr, timeout) {
-            Ok(s) => return Ok(s),
-            Err(e) => last_err = Some(Error::Io(e)),
-        }
-    }
-    Err(last_err.unwrap_or_else(|| Error::Other(format!("no addresses found for {host}"))))
 }
 
 /// Decodes a base32-encoded IP address (4 bytes = IPv4, 16 bytes = IPv6).
