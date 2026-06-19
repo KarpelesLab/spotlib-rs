@@ -697,12 +697,17 @@ impl Client {
         self.inner.events.subscribe()
     }
 
-    /// Waits until the client has at least one online connection.
+    /// Waits until at least `min_conn` connections are online — the minimum
+    /// the client maintains (the server-reported value, capped at the number
+    /// of available hosts, and always at least one). Returns
+    /// [`Error::Timeout`] if that many connections are not established within
+    /// `timeout`, or [`Error::Closed`] if the client is closed meanwhile.
     pub fn wait_online(&self, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         let mut cnt = self.inner.online_cnt.lock().unwrap();
         loop {
-            if *cnt > 0 {
+            let want = self.inner.min_conn.load(Ordering::Relaxed).max(1);
+            if *cnt >= want {
                 return Ok(());
             }
             if self.inner.is_closed() {

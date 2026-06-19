@@ -61,11 +61,20 @@ pub(crate) fn main_thread(inner: Arc<Inner>) {
 /// Fetches the server list and spawns connection threads as needed.
 fn run_connect(inner: &Arc<Inner>) -> Result<()> {
     let (mut hosts, mut min_conn) = api::get_hosts()?;
-    if min_conn == 0 {
+    hosts.truncate(10);
+    // Default to "all of them", and never require more connections than there
+    // are hosts to dial — otherwise `wait_online` could never be satisfied.
+    if min_conn == 0 || min_conn > hosts.len() as u32 {
         min_conn = hosts.len() as u32;
     }
-    hosts.truncate(10);
-    inner.min_conn.store(min_conn, Ordering::Relaxed);
+    {
+        // Update the threshold under the online-count lock and wake any waiter
+        // so a `wait_online` parked on the condvar re-evaluates against it
+        // instead of missing the change.
+        let _guard = inner.online_cnt.lock().unwrap();
+        inner.min_conn.store(min_conn, Ordering::Relaxed);
+    }
+    inner.online_cv.notify_all();
 
     for host in hosts {
         if inner.is_closed() {
