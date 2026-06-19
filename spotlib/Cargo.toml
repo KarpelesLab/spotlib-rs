@@ -1,6 +1,6 @@
 [package]
 name = "spotlib"
-version = "0.1.0"
+version = "0.1.1"
 description = "Client for the Spot secure messaging network: end-to-end encrypted messaging over websocket connections"
 keywords = ["spot", "messaging", "e2ee", "websocket"]
 categories = ["network-programming", "cryptography"]
@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-spotproto = { version = "0.1.0", path = "../spotproto" }
+spotproto = { version = "0.1.1", path = "../spotproto" }
 bottlers.workspace = true
 purecrypto.workspace = true
 rsurl.workspace = true
