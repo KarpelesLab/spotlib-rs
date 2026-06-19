@@ -1,5 +1,6 @@
 # spotlib-rs
 
+[![CI](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/ci.yml)
 [![Release-plz](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/release-plz.yml/badge.svg)](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/release-plz.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
