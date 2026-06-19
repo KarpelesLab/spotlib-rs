@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rsurl::{WsReader, WsWriter};
 use spotproto::Packet;
@@ -31,6 +31,18 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
 const STEADY_READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// Polling granularity for the writer thread checking for shutdown.
 const WRITE_POLL: Duration = Duration::from_millis(500);
+/// Pause between connection attempts for a single host, preventing a busy loop
+/// against an unreachable or misbehaving host.
+const CONN_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// How long a connection must stay online (past the handshake) before the host
+/// is considered known-good and its failure counter resets. A session that
+/// drops faster is treated as a failed attempt instead, so a host that changed
+/// and now misbehaves eventually gives up rather than looping forever.
+const CONN_HEALTHY_AFTER: Duration = Duration::from_secs(30);
+/// Consecutive failed attempts (a failed dial, or a session that never became
+/// usable) after which we give up on a host. Giving up drops `conn_cnt`; once
+/// it falls below `min_conn` the main thread pulls a fresh host list.
+const CONN_MAX_FAIL: u32 = 10;
 
 /// Manages the client lifecycle: performs the initial connection, then
 /// periodically ensures enough connections are established.
@@ -98,24 +110,44 @@ fn run_connect(inner: &Arc<Inner>) -> Result<()> {
 fn conn_thread(inner: Arc<Inner>, host: String) {
     inner.conn_cnt.fetch_add(1, Ordering::Relaxed);
 
-    let mut fail_giveup = 0;
+    // Consecutive failed attempts. A host that merely flaps keeps retrying
+    // (keeping conn_cnt up) until it exhausts CONN_MAX_FAIL; only a genuinely
+    // healthy session resets the counter. This way a host that now accepts TCP
+    // but rejects the handshake eventually gives up instead of pinning conn_cnt
+    // forever — letting the main thread pull a fresh host list.
+    let mut fails: u32 = 0;
     while !inner.is_closed() {
         match transport::connect(&host, "/_websocket", DIAL_TIMEOUT) {
             Err(e) => {
                 inner.logf(format_args!("failed to connect to server: {e}"));
-                fail_giveup += 1;
-                if fail_giveup > 10 {
-                    // give up so we can find a better connection later
+                fails += 1;
+                if fails > CONN_MAX_FAIL {
+                    // can't reach this host anymore: give up so a fresh host can take its place
                     break;
                 }
-                std::thread::sleep(Duration::from_secs(2));
+                std::thread::sleep(CONN_RETRY_DELAY);
             }
             Ok((reader, writer)) => {
-                fail_giveup = 0;
-                if let Err(e) = handle(&inner, reader, writer) {
+                let start = Instant::now();
+                let (online, res) = handle(&inner, reader, writer);
+                if let Err(e) = res {
                     inner.logf(format_args!("error during communications with server: {e}"));
                 }
-                // retry connection immediately
+                if online && start.elapsed() >= CONN_HEALTHY_AFTER {
+                    // genuinely usable for a while: a later drop is a fresh
+                    // start, so a known-good host keeps reconnecting
+                    fails = 0;
+                    std::thread::sleep(CONN_RETRY_DELAY);
+                    continue;
+                }
+                // the handshake failed, or the session dropped almost
+                // immediately: count it so conn_cnt can eventually drop and
+                // trigger a host refresh
+                fails += 1;
+                if fails > CONN_MAX_FAIL {
+                    break;
+                }
+                std::thread::sleep(CONN_RETRY_DELAY);
             }
         }
     }
@@ -126,23 +158,30 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
 
 /// Handles an established websocket connection: performs the spot handshake,
 /// then routes packets until the connection dies.
-fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<()> {
+///
+/// The returned bool reports whether the connection became online (completed
+/// the handshake) before the result occurred, letting the caller tell a host
+/// that is reachable and working from one that connects but never establishes
+/// a usable session.
+fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> (bool, Result<()>) {
     let writer = Arc::new(Mutex::new(writer));
     // A handle that force-closes the socket to wake the parked read loop on
     // shutdown. When present the reader blocks with no deadline; otherwise we
     // fall back to polling with a finite read timeout.
     let shutdown = reader.shutdown_handle();
 
-    reader
-        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
-        .map_err(|e| Error::Ws(e.to_string()))?;
-    handshake(inner, &mut reader, &writer)?;
+    if let Err(e) = reader.set_read_timeout(Some(HANDSHAKE_TIMEOUT)) {
+        return (false, Err(Error::Ws(e.to_string())));
+    }
+    if let Err(e) = handshake(inner, &mut reader, &writer) {
+        return (false, Err(e));
+    }
     let steady = shutdown
         .as_ref()
         .map_or(Some(STEADY_READ_TIMEOUT), |_| None);
-    reader
-        .set_read_timeout(steady)
-        .map_err(|e| Error::Ws(e.to_string()))?;
+    if let Err(e) = reader.set_read_timeout(steady) {
+        return (false, Err(Error::Ws(e.to_string())));
+    }
 
     inner.online_incr();
     let _online_guard = OnlineGuard { inner };
@@ -188,7 +227,7 @@ fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<
     let res = read_loop(inner, &mut reader, &writer);
     dead.store(true, Ordering::Relaxed);
     let _ = writer_thread.join();
-    res
+    (true, res)
 }
 
 /// Performs the authentication handshake: answers challenges (updating group
