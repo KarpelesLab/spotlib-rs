@@ -22,9 +22,12 @@ use crate::transport::{self, Incoming};
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Read deadline while waiting for the spot handshake to complete.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
-/// Steady-state read deadline: bounds how long a quiet connection blocks
-/// before the read loop re-checks the client's shutdown flag. rsurl buffers
-/// partial frames, so a deadline that lands mid-frame is resumed safely.
+/// Fallback steady-state read deadline, used only when the transport cannot
+/// provide a [`rsurl::WsShutdown`] handle (e.g. an unsplittable socket): it
+/// bounds how long a quiet connection blocks before re-checking the shutdown
+/// flag. When a shutdown handle is available the reader blocks with no
+/// deadline and is woken directly. rsurl buffers partial frames, so a deadline
+/// that lands mid-frame is resumed safely.
 const STEADY_READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// Polling granularity for the writer thread checking for shutdown.
 const WRITE_POLL: Duration = Duration::from_millis(500);
@@ -118,13 +121,18 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
 /// then routes packets until the connection dies.
 fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<()> {
     let writer = Arc::new(Mutex::new(writer));
+    // A handle that force-closes the socket to wake the parked read loop on
+    // shutdown. When present the reader blocks with no deadline; otherwise we
+    // fall back to polling with a finite read timeout.
+    let shutdown = reader.shutdown_handle();
 
     reader
         .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
         .map_err(|e| Error::Ws(e.to_string()))?;
     handshake(inner, &mut reader, &writer)?;
+    let steady = shutdown.as_ref().map_or(Some(STEADY_READ_TIMEOUT), |_| None);
     reader
-        .set_read_timeout(Some(STEADY_READ_TIMEOUT))
+        .set_read_timeout(steady)
         .map_err(|e| Error::Ws(e.to_string()))?;
 
     inner.online_incr();
@@ -135,14 +143,19 @@ fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<
     let writer_dead = dead.clone();
     let writer_inner = inner.clone();
     let writer_w = writer.clone();
+    let writer_shutdown = shutdown.clone();
     let writer_thread = std::thread::spawn(move || {
         loop {
             if writer_dead.load(Ordering::Relaxed) {
                 return;
             }
             if writer_inner.is_closed() {
-                // send a close so the server drops us, unblocking the read loop
+                // send a graceful close, then force the socket down so the
+                // parked read loop returns at once
                 transport::close(&writer_w);
+                if let Some(s) = &writer_shutdown {
+                    let _ = s.shutdown();
+                }
                 return;
             }
             let Some(msg) = writer_inner.wrq.pop_timeout(WRITE_POLL) else {
