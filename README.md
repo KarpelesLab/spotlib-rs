@@ -1,5 +1,8 @@
 # spotlib-rs
 
+[![Release-plz](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/release-plz.yml/badge.svg)](https://github.com/KarpelesLab/spotlib-rs/actions/workflows/release-plz.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Rust implementation of the **Spot** secure messaging protocol — a pure-Rust
 port of the Go [`spotlib`](https://github.com/KarpelesLab/spotlib) and
 [`spotproto`](https://github.com/KarpelesLab/spotproto) packages, wire
@@ -12,10 +15,10 @@ between the endpoints, so relays only ever see ciphertext.
 
 The workspace has two crates:
 
-| Crate | Description |
-|-------|-------------|
-| [`spotproto`](spotproto) | The wire protocol: packet framing, the handshake (CBOR), and the instant-message format. |
-| [`spotlib`](spotlib) | The client: identity, connection management, message routing, and the high-level messaging API. |
+| Crate | Version | Docs | Description |
+|-------|---------|------|-------------|
+| [`spotproto`](spotproto) | [![Crates.io](https://img.shields.io/crates/v/spotproto.svg)](https://crates.io/crates/spotproto) | [![Docs.rs](https://docs.rs/spotproto/badge.svg)](https://docs.rs/spotproto) | The wire protocol: packet framing, the handshake (CBOR), and the instant-message format. |
+| [`spotlib`](spotlib) | [![Crates.io](https://img.shields.io/crates/v/spotlib.svg)](https://crates.io/crates/spotlib) | [![Docs.rs](https://docs.rs/spotlib/badge.svg)](https://docs.rs/spotlib) | The client: identity, connection management, message routing, and the high-level messaging API. |
 
 ## Pure Rust, no async runtime
 
