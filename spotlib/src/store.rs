@@ -134,9 +134,7 @@ fn private_key_pkcs8(key: &PrivateKey) -> Result<Vec<u8>> {
             Ok(boxed.to_pkcs8_der())
         }
         PrivateKey::Rsa(sk) => Ok(sk.to_pkcs8_der()),
-        _ => Err(Error::Other(
-            "unsupported key type for disk storage".into(),
-        )),
+        _ => Err(Error::Other("unsupported key type for disk storage".into())),
     }
 }
 

@@ -96,7 +96,10 @@ pub fn recv_packet(reader: &mut WsReader) -> Result<Incoming> {
             Ok(Some(WsMessage::Text(_))) => continue, // ignored by the spot protocol
             Ok(None) => return Ok(Incoming::Closed),
             Err(rsurl::Error::Io(e))
-                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) =>
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
             {
                 return Ok(Incoming::Timeout)
             }

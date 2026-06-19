@@ -30,8 +30,14 @@ impl HandshakeRequest {
         if self.ready {
             map.push((Value::Text("rdy".into()), Value::Bool(true)));
         }
-        map.push((Value::Text("srv".into()), Value::Text(self.server_code.clone())));
-        map.push((Value::Text("cid".into()), Value::Text(self.client_id.clone())));
+        map.push((
+            Value::Text("srv".into()),
+            Value::Text(self.server_code.clone()),
+        ));
+        map.push((
+            Value::Text("cid".into()),
+            Value::Text(self.client_id.clone()),
+        ));
         map.push((Value::Text("rnd".into()), Value::Bytes(self.nonce.clone())));
         map.push((
             Value::Text("grp".into()),

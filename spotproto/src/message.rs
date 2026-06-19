@@ -35,7 +35,8 @@ impl Message {
     /// Serializes the message to its binary wire format (without the leading
     /// packet type byte).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(32 + self.recipient.len() + self.sender.len() + self.body.len());
+        let mut buf =
+            Vec::with_capacity(32 + self.recipient.len() + self.sender.len() + self.body.len());
         buf.extend_from_slice(&self.message_id);
         append_uvarint(&mut buf, self.flags);
         append_uvarint(&mut buf, self.recipient.len() as u64);

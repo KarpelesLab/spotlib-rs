@@ -30,17 +30,16 @@ pub fn lookup_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         }
         // fall back to regular DNS if no valid IPs were decoded
     }
-    Ok((host, port)
-        .to_socket_addrs()
-        .map_err(Error::Io)?
-        .collect())
+    Ok((host, port).to_socket_addrs().map_err(Error::Io)?.collect())
 }
 
 /// Decodes a base32-encoded IP address (4 bytes = IPv4, 16 bytes = IPv6).
 fn decode_base32_ip(encoded: &str) -> Option<IpAddr> {
     let data = base32_decode(encoded)?;
     match data.len() {
-        4 => Some(IpAddr::V4(Ipv4Addr::new(data[0], data[1], data[2], data[3]))),
+        4 => Some(IpAddr::V4(Ipv4Addr::new(
+            data[0], data[1], data[2], data[3],
+        ))),
         16 => {
             let mut b = [0u8; 16];
             b.copy_from_slice(&data);

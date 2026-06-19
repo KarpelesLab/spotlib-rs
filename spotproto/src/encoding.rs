@@ -63,7 +63,9 @@ mod tests {
     #[test]
     fn round_trip() {
         for len in 0..40 {
-            let data: Vec<u8> = (0..len as u8).map(|i| i.wrapping_mul(37).wrapping_add(5)).collect();
+            let data: Vec<u8> = (0..len as u8)
+                .map(|i| i.wrapping_mul(37).wrapping_add(5))
+                .collect();
             let enc = base64url_encode(&data);
             assert!(!enc.contains('='));
             assert_eq!(base64url_decode(&enc).unwrap(), data);

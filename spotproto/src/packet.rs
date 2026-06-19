@@ -62,7 +62,9 @@ pub fn parse(buf: &[u8], is_client: bool) -> Result<Packet, Error> {
             if is_client {
                 Ok(Packet::HandshakeRequest(HandshakeRequest::from_cbor(buf)?))
             } else {
-                Ok(Packet::HandshakeResponse(HandshakeResponse::from_cbor(buf)?))
+                Ok(Packet::HandshakeResponse(HandshakeResponse::from_cbor(
+                    buf,
+                )?))
             }
         }
         INSTANT_MSG => Ok(Packet::Message(Message::parse(buf)?)),

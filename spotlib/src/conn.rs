@@ -104,9 +104,7 @@ fn conn_thread(inner: Arc<Inner>, host: String) {
             Ok((reader, writer)) => {
                 fail_giveup = 0;
                 if let Err(e) = handle(&inner, reader, writer) {
-                    inner.logf(format_args!(
-                        "error during communications with server: {e}"
-                    ));
+                    inner.logf(format_args!("error during communications with server: {e}"));
                 }
                 // retry connection immediately
             }
@@ -130,7 +128,9 @@ fn handle(inner: &Arc<Inner>, mut reader: WsReader, writer: WsWriter) -> Result<
         .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
         .map_err(|e| Error::Ws(e.to_string()))?;
     handshake(inner, &mut reader, &writer)?;
-    let steady = shutdown.as_ref().map_or(Some(STEADY_READ_TIMEOUT), |_| None);
+    let steady = shutdown
+        .as_ref()
+        .map_or(Some(STEADY_READ_TIMEOUT), |_| None);
     reader
         .set_read_timeout(steady)
         .map_err(|e| Error::Ws(e.to_string()))?;
@@ -188,9 +188,7 @@ fn handshake(inner: &Arc<Inner>, reader: &mut WsReader, writer: &Mutex<WsWriter>
     loop {
         let data = match transport::recv_packet(reader)? {
             Incoming::Packet(data) => data,
-            Incoming::Closed => {
-                return Err(Error::Ws("connection closed during handshake".into()))
-            }
+            Incoming::Closed => return Err(Error::Ws("connection closed during handshake".into())),
             Incoming::Timeout => return Err(Error::Ws("handshake timed out".into())),
         };
         match spotproto::parse(&data, true)? {

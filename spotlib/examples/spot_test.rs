@@ -23,10 +23,7 @@ fn main() {
     let res = client
         .query(&target, b"hello self!", t)
         .expect("self ping failed");
-    println!(
-        "self ping response: {:?}",
-        String::from_utf8_lossy(&res)
-    );
+    println!("self ping response: {:?}", String::from_utf8_lossy(&res));
 
     // fetch our own ID card
     let res = client

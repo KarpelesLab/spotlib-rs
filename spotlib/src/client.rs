@@ -317,7 +317,12 @@ impl Inner {
     /// Sends a request and waits for the response until `deadline`. When the
     /// target is key-based (starts with `k.`), the message is encrypted and
     /// signed so only the recipient can open it.
-    pub fn query(self: &Arc<Self>, target: &str, body: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+    pub fn query(
+        self: &Arc<Self>,
+        target: &str,
+        body: &[u8],
+        deadline: Instant,
+    ) -> Result<Vec<u8>> {
         if target.is_empty() {
             return Err(Error::InvalidTarget(String::new()));
         }
@@ -511,9 +516,7 @@ impl ClientBuilder {
         let mut keys = self.keys;
         if ephemeral {
             // generate a new ecdsa private key
-            let sk = purecrypto::ec::ecdsa::EcdsaPrivateKey::generate(
-                &mut purecrypto::rng::OsRng,
-            );
+            let sk = purecrypto::ec::ecdsa::EcdsaPrivateKey::generate(&mut purecrypto::rng::OsRng);
             keys.push(PrivateKey::Ecdsa(sk));
         }
         for key in keys {
@@ -578,18 +581,16 @@ impl ClientBuilder {
 
 /// Installs the default handlers that don't need client state.
 fn default_handlers(handlers: &mut HashMap<String, MessageHandler>) {
-    handlers
-        .entry("ping".to_string())
-        .or_insert_with(|| {
-            Arc::new(|msg: &Message| {
-                let body = if msg.body.len() > 128 {
-                    msg.body[..128].to_vec()
-                } else {
-                    msg.body.clone()
-                };
-                Ok(Some(body))
-            })
-        });
+    handlers.entry("ping".to_string()).or_insert_with(|| {
+        Arc::new(|msg: &Message| {
+            let body = if msg.body.len() > 128 {
+                msg.body[..128].to_vec()
+            } else {
+                msg.body.clone()
+            };
+            Ok(Some(body))
+        })
+    });
     handlers.entry("version".to_string()).or_insert_with(|| {
         Arc::new(|_: &Message| {
             Ok(Some(

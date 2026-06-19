@@ -42,7 +42,11 @@ impl InstantMessage {
                 let n = v.len().min(16);
                 im.id[..n].copy_from_slice(&v[..n]);
             }
-            _ => return Err(Error::Other("invalid message, message ID is missing".into())),
+            _ => {
+                return Err(Error::Other(
+                    "invalid message, message ID is missing".into(),
+                ))
+            }
         }
         if let Some(HeaderValue::Integer(v)) = b.header.get("flg") {
             im.flags = i128::from(*v) as u64;
@@ -67,8 +71,10 @@ impl InstantMessage {
         b.header
             .insert("mid".into(), HeaderValue::Bytes(self.id.to_vec()));
         if self.flags != 0 {
-            b.header
-                .insert("flg".into(), HeaderValue::Integer((self.flags as i64).into()));
+            b.header.insert(
+                "flg".into(),
+                HeaderValue::Integer((self.flags as i64).into()),
+            );
         }
         if !self.recipient.is_empty() {
             b.header
@@ -100,8 +106,8 @@ impl InstantMessage {
             return Err(Error::Other("truncated instant message".into()));
         }
         self.id.copy_from_slice(&buf[..16]);
-        let (flags, n) = read_uvarint(&buf[16..])
-            .map_err(|e| Error::Other(format!("bad flags varint: {e}")))?;
+        let (flags, n) =
+            read_uvarint(&buf[16..]).map_err(|e| Error::Other(format!("bad flags varint: {e}")))?;
         self.flags = flags;
         Ok(16 + n)
     }

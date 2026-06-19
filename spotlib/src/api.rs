@@ -11,7 +11,10 @@ pub fn get_hosts() -> Result<(Vec<String>, u32)> {
     let url = format!("https://{API_HOST}/_special/rest/Spot:connect");
     let res = rsurl::get(&url).map_err(|e| Error::Api(e.to_string()))?;
     if res.status != 200 {
-        return Err(Error::Api(format!("Spot:connect returned status {}", res.status)));
+        return Err(Error::Api(format!(
+            "Spot:connect returned status {}",
+            res.status
+        )));
     }
     let v: serde_json::Value =
         serde_json::from_slice(&res.body).map_err(|e| Error::Api(e.to_string()))?;
