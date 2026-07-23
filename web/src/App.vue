@@ -128,6 +128,48 @@ async function pingSelf() {
     busy.value = false;
   }
 }
+
+// --- sending commands to a manually specified peer --------------------------
+
+const peerId = ref("");
+// A peer command is only sendable once online, when idle, and with a plausible
+// key-based address.
+const peerValid = computed(() => peerId.value.trim().startsWith("k."));
+const canSendPeer = computed(() => canAct.value && peerValid.value);
+
+function hexPreview(bytes, n = 16) {
+  const head = Array.from(bytes.slice(0, n))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return head + (bytes.length > n ? "…" : "");
+}
+
+// `version` replies with a UTF-8 string; `finger` replies with the peer's
+// signed ID card (binary), so it is shown as a byte count + hex preview.
+async function sendPeerCommand(endpoint) {
+  if (!canSendPeer.value) return;
+  busy.value = true;
+  const peer = peerId.value.trim();
+  const target = `${peer}/${endpoint}`;
+  append(`→ ${target}`);
+  try {
+    if (endpoint === "finger") {
+      const res = await client.query(target, new Uint8Array(), QUERY_MS);
+      append(`finger response: ${res.length} bytes — signed ID card [${hexPreview(res)}]`);
+    } else {
+      const res = await client.queryText(target, "", QUERY_MS);
+      append(`${endpoint} response: "${res}"`);
+    }
+  } catch (e) {
+    append(`${endpoint} failed: ${e}`);
+  } finally {
+    busy.value = false;
+  }
+}
+
+function useSelfAsPeer() {
+  peerId.value = targetId.value;
+}
 </script>
 
 <template>
@@ -158,6 +200,25 @@ async function pingSelf() {
     <section class="actions">
       <button :disabled="!canAct" @click="getTime">Get server time</button>
       <button :disabled="!canAct" @click="pingSelf">Ping self (e2e round-trip)</button>
+    </section>
+
+    <section class="peer">
+      <div class="k">send a command to a peer</div>
+      <div class="peer-row">
+        <input
+          v-model="peerId"
+          type="text"
+          spellcheck="false"
+          autocapitalize="off"
+          placeholder="k.<peer id>"
+        />
+        <button class="ghost" :disabled="!targetId" @click="useSelfAsPeer">use self</button>
+      </div>
+      <div class="peer-cmds">
+        <button :disabled="!canSendPeer" @click="sendPeerCommand('version')">version</button>
+        <button :disabled="!canSendPeer" @click="sendPeerCommand('finger')">finger</button>
+      </div>
+      <p class="peer-note" v-if="peerId && !peerValid">A peer id must start with <code>k.</code></p>
     </section>
 
     <section class="log">
@@ -311,6 +372,58 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.peer {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem 1rem;
+  margin-bottom: 1.75rem;
+}
+.peer .k {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.55rem;
+}
+.peer-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+.peer-row input {
+  flex: 1;
+  min-width: 0;
+  background: #010409;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 0.55rem 0.7rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.82rem;
+}
+.peer-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.peer-cmds {
+  display: flex;
+  gap: 0.6rem;
+}
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+button.ghost:hover:not(:disabled) {
+  color: var(--fg);
+  opacity: 1;
+}
+.peer-note {
+  color: var(--warn);
+  font-size: 0.78rem;
+  margin: 0.6rem 0 0;
 }
 .log {
   background: #010409;
