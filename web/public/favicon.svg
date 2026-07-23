@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="spotlib">
+  <rect width="64" height="64" rx="14" fill="#0d1117"/>
+  <circle cx="32" cy="32" r="6" fill="#58a6ff"/>
+  <g fill="none" stroke="#58a6ff" stroke-width="4" stroke-linecap="round">
+    <path d="M20 20 A17 17 0 0 0 20 44" opacity="0.85"/>
+    <path d="M44 20 A17 17 0 0 1 44 44" opacity="0.85"/>
+    <path d="M13 13 A27 27 0 0 0 13 51" opacity="0.5"/>
+    <path d="M51 13 A27 27 0 0 1 51 51" opacity="0.5"/>
+  </g>
+</svg>
