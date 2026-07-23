@@ -1,0 +1,82 @@
+name: Pages (wasm demo)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Allow the GITHUB_TOKEN to deploy to GitHub Pages and mint an OIDC token.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One concurrent Pages deploy; let a running one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build wasm + Vue
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install Rust (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: pages-wasm
+          workspaces: spot-web
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Build wasm bindings
+        run: wasm-pack build spot-web --target web --out-dir ../web/src/pkg --release
+
+      - name: Patch in the purecrypto RNG import
+        run: node web/scripts/patch-rng.mjs web/src/pkg/spot_web.js
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install and build the Vue app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

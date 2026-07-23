@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["spotproto", "spotlib"]
+# `spot-web` is a wasm32-only wasm-bindgen wrapper (it depends on spotlib with
+# the `native` feature off, which only compiles on wasm32). It is excluded from
+# the workspace so native `cargo build`/`clippy` never try to build it; it is
+# built on its own by wasm-pack (see the Pages workflow).
+exclude = ["spot-web"]
 
 [workspace.package]
 edition = "2021"
