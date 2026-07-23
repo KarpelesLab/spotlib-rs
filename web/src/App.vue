@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, computed } from "vue";
 import init, { SpotClient } from "./pkg/spot_web.js";
 import wasmUrl from "./pkg/spot_web_bg.wasm?url";
+import { setMemory } from "./purecrypto-shim.js";
 
 const WAIT_ONLINE_MS = 20000;
 const QUERY_MS = 15000;
@@ -42,7 +43,10 @@ function poll() {
 
 onMounted(async () => {
   try {
-    await init(wasmUrl);
+    const wasm = await init(wasmUrl);
+    // purecrypto's random_get writes into this memory; wire it before any
+    // client is created (key generation is the first entropy draw).
+    setMemory(wasm.memory);
     client = new SpotClient();
     targetId.value = client.targetId;
     append(`client created — id ${targetId.value}`);

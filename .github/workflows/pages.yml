@@ -48,9 +48,6 @@ jobs:
       - name: Build wasm bindings
         run: wasm-pack build spot-web --target web --out-dir ../web/src/pkg --release
 
-      - name: Patch in the purecrypto RNG import
-        run: node web/scripts/patch-rng.mjs web/src/pkg/spot_web.js
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
