@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, computed } from "vue";
 import init, { SpotClient } from "./pkg/spot_web.js";
 import wasmUrl from "./pkg/spot_web_bg.wasm?url";
 import { setMemory } from "./purecrypto-shim.js";
+import IdCard from "./IdCard.vue";
 
 const QUERY_MS = 15000;
 // After this long with no online connection, show a diagnostic hint.
@@ -17,16 +18,13 @@ const busy = ref(false);
 const log = ref([]);
 const hint = ref("");
 const idCard = ref(null);
+const peerCard = ref(null);
+const peerCardTitle = ref("");
 
 let client = null;
 let pollTimer = null;
 let diagnoseTimer = null;
 let lastOnline = -1;
-
-function fmtTime(unixSecs) {
-  if (!unixSecs) return "—";
-  return new Date(unixSecs * 1000).toISOString().replace("T", " ").replace(".000Z", "Z");
-}
 
 function refreshIdCard() {
   if (!client) return;
@@ -179,7 +177,13 @@ async function sendPeerCommand(endpoint) {
   try {
     if (endpoint === "finger") {
       const res = await client.query(target, new Uint8Array(), QUERY_MS);
-      append(`finger response: ${res.length} bytes — signed ID card [${hexPreview(res)}]`);
+      try {
+        peerCard.value = JSON.parse(SpotClient.parseIdCard(res));
+        peerCardTitle.value = `finger — ${peer}`;
+        append(`finger response: parsed ID card (${res.length} bytes)`);
+      } catch (parseErr) {
+        append(`finger response: ${res.length} bytes, but could not parse: ${parseErr} [${hexPreview(res)}]`);
+      }
     } else {
       const res = await client.queryText(target, "", QUERY_MS);
       append(`${endpoint} response: "${res}"`);
@@ -219,43 +223,7 @@ function useSelfAsPeer() {
       <code class="v">{{ targetId }}</code>
     </section>
 
-    <section class="card" v-if="idCard">
-      <div class="k">identity card</div>
-      <dl>
-        <dt>issued</dt>
-        <dd>{{ fmtTime(idCard.issued) }}</dd>
-
-        <dt>subkeys</dt>
-        <dd>
-          <div v-for="s in idCard.subkeys" :key="s.id" class="row">
-            <span class="purposes">{{ s.purposes.join(", ") || "—" }}</span>
-            <code class="mono">{{ s.id }}</code>
-          </div>
-        </dd>
-
-        <dt>groups</dt>
-        <dd>
-          <template v-if="idCard.groups.length">
-            <div v-for="g in idCard.groups" :key="g.key" class="row">
-              <span class="status" :class="{ ok: g.status === 'valid' }">{{ g.status }}</span>
-              <code class="mono">{{ g.key }}</code>
-            </div>
-          </template>
-          <span v-else class="none">none</span>
-        </dd>
-
-        <dt>metadata</dt>
-        <dd>
-          <template v-if="idCard.meta && Object.keys(idCard.meta).length">
-            <div v-for="(val, key) in idCard.meta" :key="key" class="row">
-              <span class="purposes">{{ key }}</span>
-              <span class="mono">{{ val }}</span>
-            </div>
-          </template>
-          <span v-else class="none">none</span>
-        </dd>
-      </dl>
-    </section>
+    <IdCard v-if="idCard" :card="idCard" title="identity card" />
 
     <section class="hint" v-if="hint">{{ hint }}</section>
 
@@ -282,6 +250,8 @@ function useSelfAsPeer() {
       </div>
       <p class="peer-note" v-if="peerId && !peerValid">A peer id must start with <code>k.</code></p>
     </section>
+
+    <IdCard v-if="peerCard" :card="peerCard" :title="peerCardTitle" />
 
     <section class="log">
       <div v-for="(line, i) in log" :key="i" class="line">{{ line }}</div>

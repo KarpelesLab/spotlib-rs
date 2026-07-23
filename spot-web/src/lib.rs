@@ -55,47 +55,17 @@ impl SpotClient {
     /// this is worth re-reading once online.
     #[wasm_bindgen(js_name = idCardJson)]
     pub fn id_card_json(&self) -> String {
-        let card = self.client.id_card();
-        let key_id = |k: &[u8]| {
-            let h = bottlers::hash::sha256(k);
-            spotlib::spotproto::base64url_encode(&h)
-        };
-        let subkeys: Vec<_> = card
-            .subkeys
-            .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "id": key_id(&s.key),
-                    "purposes": s.purposes,
-                    "issued": s.issued,
-                    "expires": s.expires,
-                })
-            })
-            .collect();
-        let groups: Vec<_> = card
-            .groups
-            .as_ref()
-            .map(|gs| {
-                gs.iter()
-                    .map(|m| {
-                        serde_json::json!({
-                            "key": spotlib::spotproto::base64url_encode(&m.key),
-                            "status": m.status,
-                            "issued": m.issued,
-                            "info": m.info,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        serde_json::json!({
-            "id": self.client.target_id(),
-            "issued": card.issued,
-            "subkeys": subkeys,
-            "groups": groups,
-            "meta": card.meta,
-        })
-        .to_string()
+        id_card_to_json(&self.client.id_card())
+    }
+
+    /// Parses a signed ID card (e.g. a `finger` response) into the same JSON
+    /// shape as [`id_card_json`](Self::id_card_json). Static: call as
+    /// `SpotClient.parseIdCard(bytes)`.
+    #[wasm_bindgen(js_name = parseIdCard)]
+    pub fn parse_id_card(bytes: Vec<u8>) -> Result<String, JsError> {
+        let card = bottlers::IDCard::from_signed(&bytes)
+            .map_err(|e| JsError::new(&format!("invalid ID card: {e}")))?;
+        Ok(id_card_to_json(&card))
     }
 
     /// Total number of server connections.
@@ -175,4 +145,50 @@ impl SpotClient {
     pub fn close(&self) {
         self.client.close();
     }
+}
+
+/// Renders a [`bottlers::IDCard`] into the JSON shape the demo consumes: the
+/// card's address, issue time, subkeys (purposes + short key id), group
+/// memberships and metadata.
+fn id_card_to_json(card: &bottlers::IDCard) -> String {
+    let key_id = |k: &[u8]| {
+        let h = bottlers::hash::sha256(k);
+        spotlib::spotproto::base64url_encode(&h)
+    };
+    let subkeys: Vec<_> = card
+        .subkeys
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": key_id(&s.key),
+                "purposes": s.purposes,
+                "issued": s.issued,
+                "expires": s.expires,
+            })
+        })
+        .collect();
+    let groups: Vec<_> = card
+        .groups
+        .as_ref()
+        .map(|gs| {
+            gs.iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "key": spotlib::spotproto::base64url_encode(&m.key),
+                        "status": m.status,
+                        "issued": m.issued,
+                        "info": m.info,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "id": format!("k.{}", key_id(&card.self_key)),
+        "issued": card.issued,
+        "subkeys": subkeys,
+        "groups": groups,
+        "meta": card.meta,
+    })
+    .to_string()
 }
