@@ -4,8 +4,9 @@ import init, { SpotClient } from "./pkg/spot_web.js";
 import wasmUrl from "./pkg/spot_web_bg.wasm?url";
 import { setMemory } from "./purecrypto-shim.js";
 
-const WAIT_ONLINE_MS = 20000;
 const QUERY_MS = 15000;
+// After this long with no online connection, show a diagnostic hint.
+const DIAGNOSE_AFTER_MS = 12000;
 
 // "loading" | "connecting" | "online" | "error"
 const phase = ref("loading");
@@ -14,9 +15,11 @@ const connOnline = ref(0);
 const connTotal = ref(0);
 const busy = ref(false);
 const log = ref([]);
+const hint = ref("");
 
 let client = null;
 let pollTimer = null;
+let diagnoseTimer = null;
 
 const statusLabel = computed(
   () =>
@@ -35,10 +38,38 @@ function append(msg) {
   log.value.push(`[${ts}] ${msg}`);
 }
 
+// Status is derived by polling the client's live connection counts, so the page
+// self-heals: if connections come up later (e.g. after a server-side change)
+// it flips to "online" without a reload.
 function poll() {
   if (!client) return;
   connOnline.value = client.connOnline();
   connTotal.value = client.connTotal();
+
+  if (connOnline.value > 0 && phase.value !== "online") {
+    phase.value = "online";
+    hint.value = "";
+    append(`online — ${connOnline.value}/${connTotal.value} connection(s)`);
+  } else if (connOnline.value === 0 && phase.value === "online") {
+    phase.value = "connecting";
+    append("lost all connections — reconnecting…");
+  }
+}
+
+function diagnose() {
+  if (phase.value === "online") return;
+  const origin = window.location.origin;
+  if (connTotal.value > 0) {
+    hint.value =
+      `Connection attempts are being made but none complete the Spot handshake. ` +
+      `The server is most likely rejecting this page's WebSocket Origin (${origin}) ` +
+      `on /_websocket. It will connect automatically once the server allows this Origin.`;
+  } else {
+    hint.value =
+      `No server connections yet — the host list (Spot:connect) may be unreachable ` +
+      `from this origin (${origin}).`;
+  }
+  append(`diagnostic: ${hint.value}`);
 }
 
 onMounted(async () => {
@@ -50,22 +81,21 @@ onMounted(async () => {
     client = new SpotClient();
     targetId.value = client.targetId;
     append(`client created — id ${targetId.value}`);
-    pollTimer = setInterval(poll, 1000);
 
     phase.value = "connecting";
-    append(`waiting for the network (up to ${WAIT_ONLINE_MS / 1000}s)…`);
-    await client.waitOnline(WAIT_ONLINE_MS);
+    append("connecting to the Spot network…");
     poll();
-    phase.value = "online";
-    append(`online — ${connOnline.value}/${connTotal.value} connection(s)`);
+    pollTimer = setInterval(poll, 1000);
+    diagnoseTimer = setTimeout(diagnose, DIAGNOSE_AFTER_MS);
   } catch (e) {
     phase.value = "error";
-    append(`error: ${e}`);
+    append(`init error: ${e}`);
   }
 });
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
+  if (diagnoseTimer) clearTimeout(diagnoseTimer);
   if (client) client.close();
 });
 
@@ -122,6 +152,8 @@ async function pingSelf() {
       <div class="k">this client</div>
       <code class="v">{{ targetId }}</code>
     </section>
+
+    <section class="hint" v-if="hint">{{ hint }}</section>
 
     <section class="actions">
       <button :disabled="!canAct" @click="getTime">Get server time</button>
@@ -245,6 +277,16 @@ code {
 .id .v {
   word-break: break-all;
   color: var(--accent);
+}
+.hint {
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid var(--warn);
+  color: #e3b341;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
 }
 .actions {
   display: flex;
