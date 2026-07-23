@@ -16,10 +16,26 @@ const connTotal = ref(0);
 const busy = ref(false);
 const log = ref([]);
 const hint = ref("");
+const idCard = ref(null);
 
 let client = null;
 let pollTimer = null;
 let diagnoseTimer = null;
+let lastOnline = -1;
+
+function fmtTime(unixSecs) {
+  if (!unixSecs) return "—";
+  return new Date(unixSecs * 1000).toISOString().replace("T", " ").replace(".000Z", "Z");
+}
+
+function refreshIdCard() {
+  if (!client) return;
+  try {
+    idCard.value = JSON.parse(client.idCardJson());
+  } catch (e) {
+    append(`id card read failed: ${e}`);
+  }
+}
 
 const statusLabel = computed(
   () =>
@@ -45,6 +61,13 @@ function poll() {
   if (!client) return;
   connOnline.value = client.connOnline();
   connTotal.value = client.connTotal();
+
+  // Re-read the ID card when the online count changes — group memberships are
+  // filled in by the server during the handshake.
+  if (connOnline.value !== lastOnline) {
+    lastOnline = connOnline.value;
+    refreshIdCard();
+  }
 
   if (connOnline.value > 0 && phase.value !== "online") {
     phase.value = "online";
@@ -80,6 +103,7 @@ onMounted(async () => {
     setMemory(wasm.memory);
     client = new SpotClient();
     targetId.value = client.targetId;
+    refreshIdCard();
     append(`client created — id ${targetId.value}`);
 
     phase.value = "connecting";
@@ -193,6 +217,44 @@ function useSelfAsPeer() {
     <section class="id" v-if="targetId">
       <div class="k">this client</div>
       <code class="v">{{ targetId }}</code>
+    </section>
+
+    <section class="card" v-if="idCard">
+      <div class="k">identity card</div>
+      <dl>
+        <dt>issued</dt>
+        <dd>{{ fmtTime(idCard.issued) }}</dd>
+
+        <dt>subkeys</dt>
+        <dd>
+          <div v-for="s in idCard.subkeys" :key="s.id" class="row">
+            <span class="purposes">{{ s.purposes.join(", ") || "—" }}</span>
+            <code class="mono">{{ s.id }}</code>
+          </div>
+        </dd>
+
+        <dt>groups</dt>
+        <dd>
+          <template v-if="idCard.groups.length">
+            <div v-for="g in idCard.groups" :key="g.key" class="row">
+              <span class="status" :class="{ ok: g.status === 'valid' }">{{ g.status }}</span>
+              <code class="mono">{{ g.key }}</code>
+            </div>
+          </template>
+          <span v-else class="none">none</span>
+        </dd>
+
+        <dt>metadata</dt>
+        <dd>
+          <template v-if="idCard.meta && Object.keys(idCard.meta).length">
+            <div v-for="(val, key) in idCard.meta" :key="key" class="row">
+              <span class="purposes">{{ key }}</span>
+              <span class="mono">{{ val }}</span>
+            </div>
+          </template>
+          <span v-else class="none">none</span>
+        </dd>
+      </dl>
     </section>
 
     <section class="hint" v-if="hint">{{ hint }}</section>
@@ -338,6 +400,60 @@ code {
 .id .v {
   word-break: break-all;
   color: var(--accent);
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem 1rem;
+  margin-bottom: 1.5rem;
+}
+.card > .k {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.6rem;
+}
+.card dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+}
+.card dt {
+  color: var(--muted);
+  text-align: right;
+}
+.card dd {
+  margin: 0;
+  min-width: 0;
+}
+.card .row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.1rem 0;
+}
+.card .mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--accent);
+  word-break: break-all;
+}
+.card .purposes {
+  min-width: 6.5rem;
+  color: var(--fg);
+}
+.card .status {
+  min-width: 4rem;
+  color: var(--warn);
+}
+.card .status.ok {
+  color: var(--ok);
+}
+.card .none {
+  color: var(--muted);
 }
 .hint {
   background: rgba(210, 153, 34, 0.1);

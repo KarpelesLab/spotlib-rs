@@ -49,6 +49,55 @@ impl SpotClient {
         self.client.target_id()
     }
 
+    /// The client's own ID card as a JSON string: its address, issue time,
+    /// subkeys (purposes + a short key id), group memberships and metadata.
+    /// Group memberships are populated by the server during the handshake, so
+    /// this is worth re-reading once online.
+    #[wasm_bindgen(js_name = idCardJson)]
+    pub fn id_card_json(&self) -> String {
+        let card = self.client.id_card();
+        let key_id = |k: &[u8]| {
+            let h = bottlers::hash::sha256(k);
+            spotlib::spotproto::base64url_encode(&h)
+        };
+        let subkeys: Vec<_> = card
+            .subkeys
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": key_id(&s.key),
+                    "purposes": s.purposes,
+                    "issued": s.issued,
+                    "expires": s.expires,
+                })
+            })
+            .collect();
+        let groups: Vec<_> = card
+            .groups
+            .as_ref()
+            .map(|gs| {
+                gs.iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "key": spotlib::spotproto::base64url_encode(&m.key),
+                            "status": m.status,
+                            "issued": m.issued,
+                            "info": m.info,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        serde_json::json!({
+            "id": self.client.target_id(),
+            "issued": card.issued,
+            "subkeys": subkeys,
+            "groups": groups,
+            "meta": card.meta,
+        })
+        .to_string()
+    }
+
     /// Total number of server connections.
     #[wasm_bindgen(js_name = connTotal)]
     pub fn conn_total(&self) -> u32 {
