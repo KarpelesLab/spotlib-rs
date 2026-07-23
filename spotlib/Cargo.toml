@@ -11,6 +11,15 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The `native` feature selects the blocking, thread-backed implementation and
+# is enabled by default. It can only be disabled on wasm32 (where the async
+# browser implementation is compiled instead); disabling it on any other target
+# is a compile error. wasm consumers must therefore build with
+# `default-features = false`.
+default = ["native"]
+native = []
+
 [dependencies]
 spotproto = { version = "0.1.0", path = "../spotproto" }
 bottlers.workspace = true
@@ -18,3 +27,12 @@ purecrypto.workspace = true
 rsurl.workspace = true
 ciborium.workspace = true
 serde_json.workspace = true
+
+# Browser (wasm32) backend: async connections over rsurl's `aio` WebSocket and
+# the Fetch API, driven on the single-threaded browser event loop.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+futures-channel = { version = "0.3", features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+gloo-timers = { version = "0.3", features = ["futures"] }

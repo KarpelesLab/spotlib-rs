@@ -40,6 +40,27 @@ jobs:
       - name: cargo clippy --all-targets --all-features -- -D warnings
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  wasm:
+    name: wasm32 build (browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      # The `native` (blocking, thread-backed) implementation is disabled on
+      # wasm; the async browser implementation is built instead.
+      - name: cargo build (wasm32, no default features)
+        run: cargo build -p spotlib --no-default-features --target wasm32-unknown-unknown
+      - name: cargo clippy (wasm32, warnings denied)
+        run: cargo clippy -p spotlib --no-default-features --target wasm32-unknown-unknown -- -D warnings
+
   docs:
     name: Docs build (warnings denied)
     runs-on: ubuntu-latest

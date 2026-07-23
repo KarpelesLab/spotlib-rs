@@ -172,10 +172,20 @@ pub fn signed_by(info: &OpenResult, id: &IDCard) -> bool {
 }
 
 /// Current time as Unix seconds.
+///
+/// On `wasm32` there is no `SystemTime`; the browser's `Date.now()` (which
+/// returns milliseconds since the Unix epoch) is used instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn now_unix() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Current time as Unix seconds (wasm: from the browser clock).
+#[cfg(target_arch = "wasm32")]
+pub fn now_unix() -> i64 {
+    (js_sys::Date::now() / 1000.0) as i64
 }
