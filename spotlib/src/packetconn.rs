@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::client::{Client, Inner};
+use crate::client::{Client, HandlerRc, Inner};
 use crate::error::{Error, Result};
 
 #[cfg(feature = "native")]
@@ -57,7 +57,7 @@ impl Client {
             .handlers
             .write()
             .unwrap()
-            .insert(name.to_string(), Arc::new(handler));
+            .insert(name.to_string(), HandlerRc::new(handler));
         PacketConn {
             inner: self.inner().clone(),
             name: name.to_string(),

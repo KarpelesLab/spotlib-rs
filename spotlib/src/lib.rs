@@ -129,7 +129,7 @@ mod conn_wasm;
 #[cfg(not(feature = "native"))]
 mod transport_wasm;
 
-pub use client::{Client, ClientBuilder, MessageHandler};
+pub use client::{Client, ClientBuilder, HandlerBound, MessageHandler};
 pub use error::{Error, Result};
 pub use events::{ClientEvent, Hub};
 pub use identity::clone_private_key;

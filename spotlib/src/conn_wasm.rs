@@ -177,7 +177,7 @@ async fn handle(
     inner.online_incr();
     // Hand the sink to `Inner` for outgoing user messages and flush anything
     // that was queued while offline.
-    inner.set_sink(sink);
+    inner.set_sink(sink).await;
 
     let res = read_loop(inner, &mut stream).await;
 
@@ -215,6 +215,7 @@ async fn handshake(
                 }
                 let buf = build_handshake_response(inner, &req)?;
                 sink.send_binary(&buf)
+                    .await
                     .map_err(|e| Error::Ws(e.to_string()))?;
             }
             other => {
@@ -262,7 +263,7 @@ async fn read_loop(inner: &Arc<Inner>, stream: &mut rsurl::aio::WsStream) -> Res
                     continue;
                 }
                 let buf = build_handshake_response(inner, &req)?;
-                inner.send_raw(&buf)?;
+                inner.send_raw(&buf).await?;
             }
             Packet::Message(msg) => inner.route_message(msg),
             other => {

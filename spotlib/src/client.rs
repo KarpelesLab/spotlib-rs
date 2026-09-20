@@ -33,11 +33,36 @@ use crate::conn_wasm;
 #[cfg(not(feature = "native"))]
 use futures_channel::oneshot;
 
+// The refcounted pointer a `MessageHandler` is stored behind: `Arc` on the
+// native build, where handlers are shared across connection threads, and `Rc`
+// on wasm, where they never leave the browser event loop.
+#[cfg(not(feature = "native"))]
+pub(crate) use std::rc::Rc as HandlerRc;
+#[cfg(feature = "native")]
+pub(crate) use std::sync::Arc as HandlerRc;
+
+/// The thread-safety a message handler must have. On the native build handlers
+/// run on connection threads, so they must be `Send + Sync`; on wasm everything
+/// runs on the single browser event loop and the connection state is `Rc`-based
+/// (rsurl's `WsSink`), so no bound applies.
+#[cfg(feature = "native")]
+pub trait HandlerBound: Send + Sync {}
+#[cfg(feature = "native")]
+impl<T: Send + Sync> HandlerBound for T {}
+#[cfg(not(feature = "native"))]
+pub trait HandlerBound {}
+#[cfg(not(feature = "native"))]
+impl<T> HandlerBound for T {}
+
 /// A message handler registered for an endpoint. Receives the (decrypted)
 /// message; returning `Ok(Some(body))` sends a response, `Ok(None)` stays
 /// silent, and `Err(text)` sends an error response.
+#[cfg(feature = "native")]
 pub type MessageHandler =
-    Arc<dyn Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync>;
+    HandlerRc<dyn Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync>;
+#[cfg(not(feature = "native"))]
+pub type MessageHandler =
+    HandlerRc<dyn Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String>>;
 
 /// Default timeout applied by convenience methods that fetch remote ID cards
 /// internally.
@@ -571,9 +596,9 @@ impl Inner {
 
     /// Installs the send half of a freshly online connection and flushes any
     /// messages queued while offline.
-    pub fn set_sink(&self, sink: rsurl::aio::WsSink) {
+    pub async fn set_sink(&self, sink: rsurl::aio::WsSink) {
         *self.sink.lock().unwrap() = Some(sink);
-        self.flush_out();
+        self.flush_out().await;
     }
 
     /// Drops the current sink (the connection died); queued messages remain in
@@ -584,28 +609,35 @@ impl Inner {
 
     /// Sends a pre-encoded packet on the current online sink (used for
     /// mid-stream handshake responses). Errors if there is no live connection.
-    pub fn send_raw(&self, buf: &[u8]) -> Result<()> {
-        match self.sink.lock().unwrap().as_ref() {
-            Some(s) => s.send_binary(buf).map_err(|e| Error::Ws(e.to_string())),
+    pub async fn send_raw(&self, buf: &[u8]) -> Result<()> {
+        // `WsSink` is a cheap `Rc` handle on the one browser socket: clone it
+        // out of the lock, so no guard is held across the send's await.
+        let sink = self.sink.lock().unwrap().clone();
+        match sink {
+            Some(s) => s
+                .send_binary(buf)
+                .await
+                .map_err(|e| Error::Ws(e.to_string())),
             None => Err(Error::Ws("no active connection".into())),
         }
     }
 
     /// Queues a message and attempts an immediate flush.
-    pub fn push_out(&self, msg: Message) {
+    pub async fn push_out(&self, msg: Message) {
         self.outq.lock().unwrap().push_back(msg);
-        self.flush_out();
+        self.flush_out().await;
     }
 
     /// Writes as many queued messages as the current sink accepts. On a send
     /// error the sink is dropped and the message re-queued for the next
     /// connection.
-    fn flush_out(&self) {
-        let mut sink = self.sink.lock().unwrap();
-        if sink.is_none() {
-            return;
-        }
+    async fn flush_out(&self) {
         loop {
+            // Re-read the sink each round: it is only an `Rc` clone, and the
+            // guard cannot be held across the send's await.
+            let Some(sink) = self.sink.lock().unwrap().clone() else {
+                break;
+            };
             let Some(msg) = self.outq.lock().unwrap().pop_front() else {
                 break;
             };
@@ -616,16 +648,10 @@ impl Inner {
                     continue;
                 }
             };
-            // Borrow the sink only to send, so the mutable reassignment below
-            // does not overlap the immutable borrow.
-            let sent = sink
-                .as_ref()
-                .map(|s| s.send_binary(&buf).is_ok())
-                .unwrap_or(false);
-            if !sent {
+            if sink.send_binary(&buf).await.is_err() {
                 // connection is dying: requeue and drop the sink
                 self.outq.lock().unwrap().push_front(msg);
-                *sink = None;
+                *self.sink.lock().unwrap() = None;
                 break;
             }
         }
@@ -728,7 +754,8 @@ impl Inner {
             recipient: msg.sender.clone(),
             sender: "/noreply".into(),
             body,
-        });
+        })
+        .await;
     }
 
     // --- queries -------------------------------------------------------------
@@ -766,7 +793,8 @@ impl Inner {
             recipient: target.to_string(),
             sender: format!("/{id_str}"),
             body,
-        });
+        })
+        .await;
 
         let mut obj = match conn_wasm::with_timeout(rx, timeout).await {
             Some(Ok(msg)) => msg,
@@ -843,7 +871,8 @@ impl Inner {
             recipient: target.to_string(),
             sender: from,
             body,
-        });
+        })
+        .await;
         Ok(())
     }
 
@@ -912,9 +941,9 @@ impl ClientBuilder {
     /// Registers a message handler for an endpoint.
     pub fn handler<F>(mut self, endpoint: impl Into<String>, h: F) -> Self
     where
-        F: Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync + 'static,
+        F: Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + HandlerBound + 'static,
     {
-        self.handlers.insert(endpoint.into(), Arc::new(h));
+        self.handlers.insert(endpoint.into(), HandlerRc::new(h));
         self
     }
 
@@ -961,6 +990,10 @@ impl ClientBuilder {
         let mut handlers = self.handlers;
         default_handlers(&mut handlers);
 
+        // `Inner` is shared as an `Arc` on both builds. On wasm it is not `Send`
+        // (rsurl's browser `WsSink` is `Rc`-based), but there is only ever the
+        // one browser event loop, so the atomic refcount is merely redundant.
+        #[cfg_attr(not(feature = "native"), allow(clippy::arc_with_non_send_sync))]
         let inner = Arc::new(Inner {
             kc,
             signer_pkix,
@@ -1016,7 +1049,7 @@ impl ClientBuilder {
 /// Installs the default handlers that don't need client state.
 fn default_handlers(handlers: &mut HashMap<String, MessageHandler>) {
     handlers.entry("ping".to_string()).or_insert_with(|| {
-        Arc::new(|msg: &Message| {
+        HandlerRc::new(|msg: &Message| {
             let body = if msg.body.len() > 128 {
                 msg.body[..128].to_vec()
             } else {
@@ -1026,7 +1059,7 @@ fn default_handlers(handlers: &mut HashMap<String, MessageHandler>) {
         })
     });
     handlers.entry("version".to_string()).or_insert_with(|| {
-        Arc::new(|_: &Message| {
+        HandlerRc::new(|_: &Message| {
             Ok(Some(
                 format!("spotlib-rs/{}", env!("CARGO_PKG_VERSION")).into_bytes(),
             ))
@@ -1040,7 +1073,7 @@ fn register_inner_handlers(inner: &Arc<Inner>) {
 
     let finger_inner = Arc::downgrade(inner);
     handlers.entry("finger".to_string()).or_insert_with(|| {
-        Arc::new(move |_: &Message| match finger_inner.upgrade() {
+        HandlerRc::new(move |_: &Message| match finger_inner.upgrade() {
             Some(inner) => Ok(Some(inner.id_bin())),
             None => Err("client is closed".into()),
         })
@@ -1050,7 +1083,7 @@ fn register_inner_handlers(inner: &Arc<Inner>) {
     handlers
         .entry("idcard_update".to_string())
         .or_insert_with(|| {
-            Arc::new(move |msg: &Message| {
+            HandlerRc::new(move |msg: &Message| {
                 // process ID card update notifications
                 if msg.body.is_empty() {
                     return Err("empty ID card data received".into());
@@ -1146,12 +1179,12 @@ impl Client {
     /// Registers (or removes, when `None`) a message handler for an endpoint.
     pub fn set_handler<F>(&self, endpoint: impl Into<String>, handler: Option<F>)
     where
-        F: Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + Send + Sync + 'static,
+        F: Fn(&Message) -> std::result::Result<Option<Vec<u8>>, String> + HandlerBound + 'static,
     {
         let mut handlers = self.inner.handlers.write().unwrap();
         match handler {
             Some(h) => {
-                handlers.insert(endpoint.into(), Arc::new(h));
+                handlers.insert(endpoint.into(), HandlerRc::new(h));
             }
             None => {
                 handlers.remove(&endpoint.into());
