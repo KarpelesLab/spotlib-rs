@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/KarpelesLab/spotlib-rs/compare/spotlib-v0.1.1...spotlib-v0.1.2) - 2026-09-20
+
+### Fixed
+
+- *(wasm)* adapt the browser client to rsurl 0.1.15's WebSocket API
+
 ## [0.1.1](https://github.com/KarpelesLab/spotlib-rs/compare/spotlib-v0.1.0...spotlib-v0.1.1) - 2026-07-23
 
 ### Added
